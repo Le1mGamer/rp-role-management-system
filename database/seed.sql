@@ -45,3 +45,13 @@ INSERT INTO logs (id,user_id,action,timestamp) VALUES
 (1,2,'Видав покарання користувачу Mark_Daniels','2026-04-25 15:42'),
 (2,3,'Схвалив заявку Olivia_Stone до EMS','2026-04-28 13:40')
 ON CONFLICT (id) DO NOTHING;
+
+SELECT setval('users_id_seq', COALESCE((SELECT MAX(id) FROM users), 1), true);
+SELECT setval('organizations_id_seq', COALESCE((SELECT MAX(id) FROM organizations), 1), true);
+SELECT setval('players_id_seq', COALESCE((SELECT MAX(id) FROM players), 1), true);
+SELECT setval('admins_id_seq', COALESCE((SELECT MAX(id) FROM admins), 1), true);
+SELECT setval('leaders_id_seq', COALESCE((SELECT MAX(id) FROM leaders), 1), true);
+SELECT setval('rules_id_seq', COALESCE((SELECT MAX(id) FROM rules), 1), true);
+SELECT setval('applications_id_seq', COALESCE((SELECT MAX(id) FROM applications), 1), true);
+SELECT setval('punishments_id_seq', COALESCE((SELECT MAX(id) FROM punishments), 1), true);
+SELECT setval('logs_id_seq', COALESCE((SELECT MAX(id) FROM logs), 1), true);
