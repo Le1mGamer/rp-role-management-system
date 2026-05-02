@@ -19,6 +19,11 @@ const auth = (roles) => async (req, res, next) => {
   next();
 };
 
+async function refreshOrgMembers(orgId) {
+  await pool.query('update organizations set members=(select count(*) from players where organization_id=$1) where id=$1', [orgId]);
+  await pool.query('update leaders set members_count=(select count(*) from players where organization_id=$1) where organization_id=$1', [orgId]);
+}
+
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
 app.post('/api/auth/login', async (req, res) => {
@@ -36,8 +41,14 @@ app.get('/api/users', auth(['leader','admin']), async (_req, res) => {
 });
 
 app.get('/api/players', auth(['leader','admin']), async (_req, res) => {
-  const { rows } = await pool.query('select p.id,p.user_id as "userId",u.nickname,u.role,u.status,p.level,p.experience,p.reputation,o.name as organization from players p join users u on u.id=p.user_id left join organizations o on o.id=p.organization_id order by p.id');
+  const { rows } = await pool.query('select p.id,p.user_id as "userId",u.nickname,u.role,u.status,p.level,p.experience,p.reputation,p.organization_id as "organizationId",o.name as organization from players p join users u on u.id=p.user_id left join organizations o on o.id=p.organization_id order by p.id');
   res.json(rows);
+});
+
+app.get('/api/leader/organization', auth(['leader']), async (req, res) => {
+  const { rows } = await pool.query('select o.id,o.name,o.type,o.rating,o.created_at as "createdAt",o.members,l.rank,l.members_count as "membersCount" from leaders l join organizations o on o.id=l.organization_id where l.user_id=$1', [req.user.id]);
+  if (!rows[0]) return res.status(404).json({ message: 'Leader organization not found' });
+  res.json(rows[0]);
 });
 
 app.get('/api/organizations', auth(['player','leader','admin']), async (_req, res) => {
@@ -85,11 +96,41 @@ app.get('/api/applications', auth(['player','leader','admin']), async (req, res)
   res.json(rows);
 });
 
+app.post('/api/applications', auth(['player']), async (req, res) => {
+  const { organizationId, type } = req.body;
+  const { rows } = await pool.query('insert into applications(applicant_id,organization_id,type,status,submitted_at) values($1,$2,$3,$4,now()) returning id, applicant_id as "applicantId", organization_id as "organizationId", type, status, submitted_at as "submittedAt"', [req.user.id, Number(organizationId), type || 'join_organization', 'pending']);
+  await pool.query('insert into logs(user_id,action,timestamp) values($1,$2,now())', [req.user.id, `Подав заявку до організації #${organizationId}`]);
+  res.status(201).json(rows[0]);
+});
+
 app.patch('/api/applications/:id/status', auth(['leader','admin']), async (req, res) => {
   const { status } = req.body;
-  const { rows } = await pool.query('update applications set status=$1 where id=$2 returning id,status', [status, req.params.id]);
+  if (!['pending','approved','rejected'].includes(status)) return res.status(400).json({ message: 'Invalid status' });
+  const { rows } = await pool.query('update applications set status=$1 where id=$2 returning id,status,applicant_id as "applicantId",organization_id as "organizationId"', [status, req.params.id]);
   if (!rows[0]) return res.status(404).json({ message: 'Application not found' });
+  if (status === 'approved') {
+    await pool.query('update players set organization_id=$1 where user_id=$2', [rows[0].organizationId, rows[0].applicantId]);
+    await refreshOrgMembers(rows[0].organizationId);
+  }
   await pool.query('insert into logs(user_id,action,timestamp) values($1,$2,now())', [req.user.id, `Змінив статус заявки #${req.params.id} на ${status}`]);
+  res.json(rows[0]);
+});
+
+app.patch('/api/players/:userId/organization', auth(['leader','admin']), async (req, res) => {
+  const userId = Number(req.params.userId);
+  let organizationId = req.body.organizationId === null || req.body.organizationId === '' ? null : Number(req.body.organizationId);
+  if (req.user.role === 'leader') {
+    const { rows } = await pool.query('select organization_id from leaders where user_id=$1', [req.user.id]);
+    if (!rows[0]) return res.status(404).json({ message: 'Leader organization not found' });
+    if (organizationId !== null && organizationId !== rows[0].organization_id) return res.status(403).json({ message: 'Leader can manage only own organization' });
+  }
+  const before = await pool.query('select organization_id from players where user_id=$1', [userId]);
+  const oldOrg = before.rows[0]?.organization_id;
+  const { rows } = await pool.query('update players set organization_id=$1 where user_id=$2 returning user_id as "userId", organization_id as "organizationId"', [organizationId, userId]);
+  if (!rows[0]) return res.status(404).json({ message: 'Player not found' });
+  if (oldOrg) await refreshOrgMembers(oldOrg);
+  if (organizationId) await refreshOrgMembers(organizationId);
+  await pool.query('insert into logs(user_id,action,timestamp) values($1,$2,now())', [req.user.id, organizationId ? `Додав користувача #${userId} до організації #${organizationId}` : `Видалив користувача #${userId} з організації`]);
   res.json(rows[0]);
 });
 
