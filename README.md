@@ -9,23 +9,50 @@
 ## Поточна реалізація
 
 - Frontend: React + Vite
+- Backend: Node.js + Express
+- Database: PostgreSQL
 - Мова інтерфейсу: UA / ENG
-- Дані: штучно згенеровані seed-дані у `src/data/seedData.js`
-- Розділи сайту: панель керування, гравці, правила, заявки, організації, покарання, логи
+- Авторизація: nickname + password
+- Рольовий доступ: player, leader, admin
+- CRUD для правил: адміністратор може додавати, редагувати та видаляти правила через сайт
+- Форми дій: розгляд заявок лідером/адміністратором, видача покарання адміністратором
 
 ## Структура даних
 
-Початкові дані сформовано відповідно до логіки лабораторних робіт:
+Таблиці сформовано відповідно до логіки лабораторних робіт:
 
-- Users
-- Players
-- Admins
-- Leaders
-- Organizations
-- Rules
-- Applications
-- Punishments
-- Logs
+- users
+- players
+- admins
+- leaders
+- organizations
+- rules
+- applications
+- punishments
+- logs
+
+## Налаштування PostgreSQL
+
+Створи базу даних:
+
+```bash
+createdb rp_role_management
+```
+
+Виконай SQL-файли:
+
+```bash
+psql -d rp_role_management -f database/schema.sql
+psql -d rp_role_management -f database/seed.sql
+```
+
+Створи файл `.env` у корені проєкту:
+
+```env
+DATABASE_URL=postgresql://postgres:postgres@localhost:5432/rp_role_management
+PORT=4000
+VITE_API_URL=http://localhost:4000/api
+```
 
 ## Запуск проєкту
 
@@ -34,8 +61,19 @@ npm install
 npm run dev
 ```
 
-Після запуску Vite відкриє локальну адресу для перегляду сайту.
+Команда запускає одночасно:
 
-## Подальший розвиток
+- backend API: `http://localhost:4000/api`
+- frontend Vite: `http://localhost:5173`
 
-Наступний етап — підключення backend/API та реальної бази даних PostgreSQL. Планується винести seed-дані у таблиці бази даних, реалізувати REST API, авторизацію, CRUD-операції та рольове розмежування доступу.
+## Тестові акаунти
+
+```text
+Player: John_Vancheti / Player123!
+Leader: Alex_Moreno / Leader123!
+Admin: Henry_Orlov / Admin123!
+```
+
+## Важливо
+
+Якщо PostgreSQL або backend ще не запущено, сайт автоматично покаже локальні seed-дані з `src/data/seedData.js`. Для реального додавання, редагування та видалення правил потрібно запустити PostgreSQL і backend.
