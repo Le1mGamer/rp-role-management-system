@@ -28,20 +28,34 @@ app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
 app.post('/api/auth/login', async (req, res) => {
   const { nickname, password } = req.body;
-  const { rows } = await pool.query('select id,nickname,email,role,status,last_login as "lastLogin" from users where lower(nickname)=lower($1) and password=$2', [nickname, password]);
+  const { rows } = await pool.query('select id,nickname,email,role,status,last_login as "lastLogin",birth_date as "birthDate",profile_description as "profileDescription" from users where lower(nickname)=lower($1) and password=$2', [nickname, password]);
   const user = rows[0];
   if (!user || user.status === 'banned') return res.status(401).json({ message: 'Invalid login or blocked account' });
   await pool.query('update users set last_login=now() where id=$1', [user.id]);
   res.json(user);
 });
 
-app.get('/api/users', auth(['leader','admin']), async (_req, res) => {
-  const { rows } = await pool.query('select id,nickname,email,role,status,last_login as "lastLogin" from users order by id');
+app.get('/api/profile', auth(['player','leader','admin']), async (req, res) => {
+  const { rows } = await pool.query('select id,nickname,email,role,status,last_login as "lastLogin",birth_date as "birthDate",profile_description as "profileDescription" from users where id=$1', [req.user.id]);
+  res.json(rows[0]);
+});
+
+app.put('/api/profile', auth(['player','leader','admin']), async (req, res) => {
+  const { email, birthDate, profileDescription } = req.body;
+  const { rows } = await pool.query('update users set email=$1,birth_date=$2,profile_description=$3 where id=$4 returning id,nickname,email,role,status,last_login as "lastLogin",birth_date as "birthDate",profile_description as "profileDescription"', [email || null, birthDate || null, profileDescription || '', req.user.id]);
+  await pool.query('insert into logs(user_id,action,timestamp) values($1,$2,now())', [req.user.id, 'Оновив дані профілю']);
+  res.json(rows[0]);
+});
+
+app.get('/api/users', auth(['leader','admin']), async (req, res) => {
+  const emailField = req.user.role === 'admin' ? 'email' : 'null as email';
+  const { rows } = await pool.query(`select id,nickname,${emailField},role,status,last_login as "lastLogin",birth_date as "birthDate",profile_description as "profileDescription" from users order by id`);
   res.json(rows);
 });
 
-app.get('/api/players', auth(['leader','admin']), async (_req, res) => {
-  const { rows } = await pool.query('select p.id,p.user_id as "userId",u.nickname,u.role,u.status,p.level,p.experience,p.reputation,p.organization_id as "organizationId",o.name as organization from players p join users u on u.id=p.user_id left join organizations o on o.id=p.organization_id order by p.id');
+app.get('/api/players', auth(['player','leader','admin']), async (req, res) => {
+  const emailField = req.user.role === 'admin' ? 'u.email' : 'null as email';
+  const { rows } = await pool.query(`select p.id,p.user_id as "userId",u.nickname,${emailField},u.role,u.status,u.birth_date as "birthDate",u.profile_description as "profileDescription",p.level,p.experience,p.reputation,p.organization_id as "organizationId",o.name as organization from players p join users u on u.id=p.user_id left join organizations o on o.id=p.organization_id order by p.id`);
   res.json(rows);
 });
 
@@ -57,9 +71,7 @@ app.get('/api/organizations', auth(['player','leader','admin']), async (_req, re
 });
 
 app.get('/api/rules', auth(['player','leader','admin']), async (req, res) => {
-  const sql = req.user.role === 'admin'
-    ? 'select id,category,title,text,access,updated_at as "updatedAt" from rules order by id'
-    : 'select id,category,title,text,access,updated_at as "updatedAt" from rules where access in ($1,$2) order by id';
+  const sql = req.user.role === 'admin' ? 'select id,category,title,text,access,updated_at as "updatedAt" from rules order by id' : 'select id,category,title,text,access,updated_at as "updatedAt" from rules where access in ($1,$2) order by id';
   const params = req.user.role === 'admin' ? [] : ['all', req.user.role];
   const { rows } = await pool.query(sql, params);
   res.json(rows);
@@ -108,10 +120,7 @@ app.patch('/api/applications/:id/status', auth(['leader','admin']), async (req, 
   if (!['pending','approved','rejected'].includes(status)) return res.status(400).json({ message: 'Invalid status' });
   const { rows } = await pool.query('update applications set status=$1 where id=$2 returning id,status,applicant_id as "applicantId",organization_id as "organizationId"', [status, req.params.id]);
   if (!rows[0]) return res.status(404).json({ message: 'Application not found' });
-  if (status === 'approved') {
-    await pool.query('update players set organization_id=$1 where user_id=$2', [rows[0].organizationId, rows[0].applicantId]);
-    await refreshOrgMembers(rows[0].organizationId);
-  }
+  if (status === 'approved') { await pool.query('update players set organization_id=$1 where user_id=$2', [rows[0].organizationId, rows[0].applicantId]); await refreshOrgMembers(rows[0].organizationId); }
   await pool.query('insert into logs(user_id,action,timestamp) values($1,$2,now())', [req.user.id, `Змінив статус заявки #${req.params.id} на ${status}`]);
   res.json(rows[0]);
 });
