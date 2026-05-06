@@ -32,6 +32,10 @@ async function refreshOrgMembers(orgId) {
   await pool.query('update leaders set members_count=(select count(*) from players where organization_id=$1) where organization_id=$1', [orgId]);
 }
 
+app.get('/', (_req, res) => {
+  res.type('html').send('<h1>RP Role Management API</h1><p>Backend is running.</p><ul><li><a href="/api/health">/api/health</a></li></ul>');
+});
+app.get('/api', (_req, res) => res.json({ name: 'RP Role Management API', status: 'running', health: '/api/health' }));
 app.get('/api/health', (_req, res) => res.json({ status: 'ok' }));
 
 app.post('/api/auth/login', async (req, res) => {
