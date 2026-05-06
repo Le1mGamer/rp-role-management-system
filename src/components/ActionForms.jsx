@@ -1,17 +1,18 @@
-export function ApplicationForm({ user, organizations, form, setForm, onSubmit }) {
+export function ApplicationForm({ user, organizations, form, setForm, onSubmit, disabled = false, restrictionMessage = '' }) {
   if (user.role !== 'player') return null;
   return (
     <form className="action-form" onSubmit={onSubmit}>
       <h3>Подати заявку</h3>
-      <select required value={form.organizationId} onChange={(e) => setForm({ ...form, organizationId: e.target.value })}>
+      {restrictionMessage && <div className="warning-box">{restrictionMessage}</div>}
+      <select required disabled={disabled} value={form.organizationId} onChange={(e) => setForm({ ...form, organizationId: e.target.value })}>
         <option value="">Оберіть організацію</option>
         {organizations.map((org) => <option key={org.id} value={org.id}>{org.name}</option>)}
       </select>
-      <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
+      <select disabled={disabled} value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
         <option value="join_organization">join_organization</option>
         <option value="rank_update">rank_update</option>
       </select>
-      <button className="primary-btn">Надіслати заявку</button>
+      <button className="primary-btn" disabled={disabled}>Надіслати заявку</button>
     </form>
   );
 }
@@ -71,8 +72,9 @@ export function PunishmentForm({ users, form, setForm, onSubmit }) {
         {users.map((user) => <option key={user.id} value={user.id}>{user.nickname}</option>)}
       </select>
       <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })}>
-        <option value="warning">warning</option>
-        <option value="ban">ban</option>
+        <option value="warning">Warning</option>
+        <option value="ban">Ban</option>
+        <option value="mute">Mute</option>
       </select>
       <input placeholder="Причина" value={form.reason} onChange={(e) => setForm({ ...form, reason: e.target.value })} />
       <input type="date" value={form.endDate} onChange={(e) => setForm({ ...form, endDate: e.target.value })} />
