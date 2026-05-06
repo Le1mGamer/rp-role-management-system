@@ -33,12 +33,17 @@ input, select, textarea { width: 100%; border: 1px solid rgba(255,255,255,.16); 
 select option { color: #111827; }
 textarea { min-height: 100px; resize: vertical; }
 .search-box input { background: rgba(255,255,255,.12); }
-.cards-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
-.rule-card, .cabinet-card, .action-form, .mini-card, .table-wrap { background: rgba(255,255,255,.075); border: 1px solid rgba(255,255,255,.1); border-radius: 22px; padding: 20px; box-shadow: 0 18px 44px rgba(0,0,0,.18); }
+.cards-grid, .profile-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 18px; }
+.rule-card, .profile-card, .cabinet-card, .action-form, .mini-card, .table-wrap { background: rgba(255,255,255,.075); border: 1px solid rgba(255,255,255,.1); border-radius: 22px; padding: 20px; box-shadow: 0 18px 44px rgba(0,0,0,.18); }
 .rule-card span { display: inline-block; margin-bottom: 12px; padding: 6px 10px; border-radius: 999px; background: rgba(255,255,255,.12); color: #ffd4dc; font-size: 12px; font-weight: 900; }
-.rule-card h3, .mini-card h3, .action-form h3 { margin: 0 0 12px; }
-.rule-card p, .mini-card p, .cabinet-card p { color: rgba(255,255,255,.84); line-height: 1.5; }
+.rule-card h3, .profile-card h3, .mini-card h3, .action-form h3 { margin: 0 0 12px; }
+.rule-card p, .profile-card p, .mini-card p, .cabinet-card p { color: rgba(255,255,255,.84); line-height: 1.5; }
 .rule-card small { color: rgba(255,255,255,.66); }
+.profile-card h3 { font-size: 24px; }
+.profile-card p { min-height: 72px; }
+.profile-meta { display: grid; gap: 8px; margin-top: 14px; }
+.profile-meta span { display: block; padding: 9px 10px; border-radius: 12px; background: rgba(255,255,255,.08); color: rgba(255,255,255,.82); font-size: 14px; }
+.cabinet-layout { display: grid; grid-template-columns: minmax(260px, 0.8fr) minmax(320px, 1.2fr); gap: 18px; align-items: start; }
 .action-form { display: grid; gap: 12px; margin-bottom: 18px; }
 .form-actions, .inline-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
 .form-actions button, td button, .row-line button { border: 1px solid rgba(255,255,255,.18); background: rgba(255,255,255,.1); color: #fff; padding: 9px 12px; border-radius: 12px; font-weight: 700; }
@@ -55,5 +60,5 @@ td { padding: 13px 12px; border-bottom: 1px solid rgba(255,255,255,.08); color: 
 .mini-list { display: grid; gap: 4px; }
 .cabinet-card { max-width: 540px; }
 .cabinet-card h3 { margin: 0 0 12px; font-size: 28px; }
-@media (max-width: 960px) { .glass-header { align-items: stretch; flex-direction: column; } .header-actions { justify-content: flex-end; } .hero-title { margin-top: 90px; } .landing-content { margin-top: 60px; } .admin-grid { grid-template-columns: 1fr; } }
+@media (max-width: 960px) { .glass-header { align-items: stretch; flex-direction: column; } .header-actions { justify-content: flex-end; } .hero-title { margin-top: 90px; } .landing-content { margin-top: 60px; } .admin-grid, .cabinet-layout { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .site-shell { padding: 12px; } .top-nav, .header-actions { width: 100%; } .top-nav button, .header-actions button { flex: 1; } .hero-title h1 { font-size: 48px; } .content-panel { padding: 18px; border-radius: 22px; } }
