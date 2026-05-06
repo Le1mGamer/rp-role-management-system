@@ -19,6 +19,7 @@ button { cursor: pointer; }
 .dark-btn, .accent-btn, .primary-btn { border: 0; border-radius: 14px; padding: 13px 18px; font-weight: 900; display: inline-flex; align-items: center; gap: 8px; justify-content: center; }
 .dark-btn { background: #05070b; color: #fff; }
 .accent-btn, .primary-btn { background: linear-gradient(135deg, #ff3861, #ff743e); color: #fff; }
+.dark-btn.active, .accent-btn.active { outline: 2px solid rgba(255,255,255,.78); outline-offset: 3px; transform: translateY(-1px); box-shadow: 0 0 0 6px rgba(255,255,255,.08), 0 18px 36px rgba(0,0,0,.28); }
 .hero-title { position: relative; z-index: 2; max-width: 940px; margin: 130px auto 0; text-align: center; }
 .hero-title h1 { margin: 0 0 22px; font-size: clamp(54px, 8vw, 112px); line-height: .92; font-weight: 950; letter-spacing: .03em; text-transform: uppercase; text-shadow: 0 16px 42px rgba(0,0,0,.45); }
 .hero-title p { margin: 0 auto; max-width: 820px; color: rgba(255,255,255,.9); font-size: clamp(18px, 2vw, 28px); line-height: 1.45; }
