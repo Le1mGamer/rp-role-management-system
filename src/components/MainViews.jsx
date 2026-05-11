@@ -1,5 +1,6 @@
 import { LogOut } from 'lucide-react';
-import { ApplicationForm, LeaderMembers, RuleForm, PunishmentForm } from './ActionForms.jsx';
+import { ApplicationForm, LeaderMembers, RuleForm } from './ActionForms.jsx';
+import AdminTools from './AdminTools.jsx';
 
 const emptyRule = { category: '', title: '', text: '', access: 'all' };
 const fmtDate = (value) => (value ? String(value).slice(0, 10) : '');
@@ -12,7 +13,7 @@ export function Section({ title, subtitle, children }) {
 export function PunishmentNotice({ user }) {
   const list = user?.punishments || [];
   if (!list.length) return null;
-  return <div className="warning-box"><b>Активні покарання:</b> {list.map((p) => `${String(p.type).toUpperCase()} — ${p.reason || 'без причини'}${p.endDate ? ` до ${fmtDate(p.endDate)}` : ''}`).join('; ')}</div>;
+  return <div className="warning-box"><b>Активні покарання:</b> {list.map((p) => String(p.type).toUpperCase() + ' — ' + (p.reason || 'без причини') + (p.endDate ? ' до ' + fmtDate(p.endDate) : '')).join('; ')}</div>;
 }
 
 export function RulesView({ rules, user, ruleForm, setRuleForm, editRuleId, setEditRuleId, saveRule, removeRule }) {
@@ -30,7 +31,7 @@ export function ApplicationsView({ apps, user, organizations, appForm, setAppFor
     <PunishmentNotice user={user} />
     <ApplicationForm user={user || { role: 'guest' }} organizations={organizations} form={appForm} setForm={setAppForm} onSubmit={submitApplication} disabled={isRestricted} restrictionMessage={message} />
     {!user && <button className="dark-btn" onClick={() => setActiveTab('cabinet')}>Перейти в кабінет</button>}
-    <div className="table-wrap"><table><thead><tr><th>{t.applicant}</th><th>{t.organization}</th><th>{t.type}</th><th>{t.status}</th><th>{t.submittedAt}</th>{['leader','admin'].includes(user?.role) && <th>Дії</th>}</tr></thead><tbody>{apps.map((a) => <tr key={a.id}><td>{a.applicant}</td><td>{a.organization}</td><td>{a.type}</td><td>{t[a.status] || a.status}</td><td>{String(a.submittedAt)}</td>{['leader','admin'].includes(user?.role) && <td><button onClick={() => change(a.id, 'approved')}>Approve</button><button onClick={() => change(a.id, 'rejected')}>Reject</button></td>}</tr>)}</tbody></table></div>
+    <div className="table-wrap"><table><thead><tr><th>{t.applicant}</th><th>{t.organization}</th><th>{t.type}</th><th>{t.status}</th><th>{t.submittedAt}</th>{['leader','admin'].includes(user?.role) && <th>Дії</th>}</tr></thead><tbody>{apps.map((a) => <tr key={a.id}><td>{a.applicant}</td><td>{a.organization}</td><td>{a.type}</td><td>{t[a.status] || a.status}</td><td>{String(a.submittedAt)}</td>{['leader','admin'].includes(user?.role) && <td><button onClick={() => change(a.id, 'reviewing')}>Reviewing</button><button onClick={() => change(a.id, 'needs_info')}>Needs info</button><button onClick={() => change(a.id, 'approved')}>Approve</button><button onClick={() => change(a.id, 'rejected')}>Reject</button></td>}</tr>)}</tbody></table></div>
   </Section>;
 }
 
@@ -47,9 +48,9 @@ export function PlayersView({ user, players, usersById, orgsById, leaderOrg, org
   </Section>;
 }
 
-export function AdminView({ user, users, punishments, logs, punishmentForm, setPunishmentForm, createPunishment }) {
-  if (user?.role !== 'admin') return <Section title="Адмін панель" subtitle="Доступ обмежено"><div className="error-box">У тебе немає доступу до цього розділу.</div></Section>;
-  return <Section title="Адмін панель" subtitle="Користувачі, покарання та журнал дій."><div className="admin-grid"><PunishmentForm users={users} form={punishmentForm} setForm={setPunishmentForm} onSubmit={createPunishment} /><div className="mini-card"><h3>Користувачі та email</h3>{users.map((u) => <p key={u.id}>{u.nickname}: {u.email || '-'}</p>)}</div><div className="mini-card"><h3>Покарання</h3>{punishments.map((p) => <p key={p.id}>{p.nickname}: {String(p.type).toUpperCase()} — {p.reason}</p>)}</div><div className="mini-card wide"><h3>Останні логи</h3>{logs.slice(0, 8).map((l) => <p key={l.id}>{l.nickname}: {l.action}</p>)}</div></div></Section>;
+export function AdminView(props) {
+  if (props.user?.role !== 'admin') return <Section title="Адмін панель" subtitle="Доступ обмежено"><div className="error-box">У тебе немає доступу до цього розділу.</div></Section>;
+  return <Section title="Адмін панель" subtitle="Керування ролями, організаціями, покараннями та звітами."><AdminTools {...props} /></Section>;
 }
 
 export function ForumView({ user, messages, messageText, setMessageText, sendMessage, setActiveTab }) {
@@ -70,5 +71,12 @@ export function LogsView({ logs }) {
 
 export function CabinetView({ user, nickname, password, profileForm, setProfileForm, setNickname, setPassword, handleLogin, saveProfile, logout, loginError, language, setLanguage }) {
   const isBanned = hasPunishment(user, 'ban');
-  return <Section title="Кабінет" subtitle="Вхід, вихід та керування обліковим записом.">{user ? <div className="cabinet-layout"><div className="cabinet-card"><h3>{user.nickname}</h3><p>Роль: {user.role}</p><p>Email: {user.email || 'Не додано'}</p><p>Дата народження: {fmtDate(user.birthDate) || 'Не вказано'}</p><p>Статус: {user.status}</p><p>Опис: {user.profileDescription || 'Опис профілю ще не додано.'}</p><PunishmentNotice user={user} /><button className="dark-btn" onClick={logout}><LogOut size={16} /> Вийти з акаунту</button></div><form className="action-form" onSubmit={saveProfile}><h3>Редагування профілю</h3>{isBanned && <div className="error-box">Ban: редагування профілю обмежено.</div>}<input disabled={isBanned} placeholder="Електронна пошта" value={profileForm.email} onChange={(e) => setProfileForm({ ...profileForm, email: e.target.value })} /><input disabled={isBanned} type="date" value={profileForm.birthDate} onChange={(e) => setProfileForm({ ...profileForm, birthDate: e.target.value })} /><textarea disabled={isBanned} placeholder="Опис профілю" value={profileForm.profileDescription} onChange={(e) => setProfileForm({ ...profileForm, profileDescription: e.target.value })} /><button className="accent-btn" disabled={isBanned}>Зберегти профіль</button></form></div> : <form className="action-form" onSubmit={handleLogin}><input placeholder="Нікнейм" value={nickname} onChange={(e) => setNickname(e.target.value)} /><input type="password" placeholder="Пароль" value={password} onChange={(e) => setPassword(e.target.value)} />{loginError && <div className="error-box">{loginError}</div>}<div className="form-actions"><button className="accent-btn">Увійти</button><select value={language} onChange={(e) => setLanguage(e.target.value)}><option value="uk">UA</option><option value="en">ENG</option></select></div></form>}</Section>;
+  async function discordLogin() {
+    try {
+      const res = await fetch((import.meta.env.VITE_API_URL || 'http://localhost:4000/api') + '/auth/discord/url');
+      const data = await res.json();
+      if (data.url) window.location.href = data.url;
+    } catch (e) { alert('Discord OAuth не налаштовано. Перевір .env.'); }
+  }
+  return <Section title="Кабінет" subtitle="Вхід, вихід та керування обліковим записом.">{user ? <div className="cabinet-layout"><div className="cabinet-card"><h3>{user.nickname}</h3><p>Роль: {user.role}</p><p>Email: {user.email || 'Не додано'}</p><p>Дата народження: {fmtDate(user.birthDate) || 'Не вказано'}</p><p>Статус: {user.status}</p><p>Опис: {user.profileDescription || 'Опис профілю ще не додано.'}</p><PunishmentNotice user={user} /><button className="dark-btn" onClick={logout}><LogOut size={16} /> Вийти з акаунту</button></div><form className="action-form" onSubmit={saveProfile}><h3>Редагування профілю</h3>{isBanned && <div className="error-box">Ban: редагування профілю обмежено.</div>}<input disabled={isBanned} placeholder="Електронна пошта" value={profileForm.email} onChange={(e) => setProfileForm({ ...profileForm, email: e.target.value })} /><input disabled={isBanned} type="date" value={profileForm.birthDate} onChange={(e) => setProfileForm({ ...profileForm, birthDate: e.target.value })} /><textarea disabled={isBanned} placeholder="Опис профілю" value={profileForm.profileDescription} onChange={(e) => setProfileForm({ ...profileForm, profileDescription: e.target.value })} /><button className="accent-btn" disabled={isBanned}>Зберегти профіль</button></form></div> : <form className="action-form" onSubmit={handleLogin}><input placeholder="Нікнейм" value={nickname} onChange={(e) => setNickname(e.target.value)} /><input type="password" placeholder="Пароль" value={password} onChange={(e) => setPassword(e.target.value)} />{loginError && <div className="error-box">{loginError}</div>}<div className="form-actions"><button className="accent-btn">Увійти</button><button type="button" className="dark-btn" onClick={discordLogin}>Увійти через Discord</button><select value={language} onChange={(e) => setLanguage(e.target.value)}><option value="uk">UA</option><option value="en">ENG</option></select></div></form>}</Section>;
 }
