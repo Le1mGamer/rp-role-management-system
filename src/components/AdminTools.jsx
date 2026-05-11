@@ -3,6 +3,7 @@ import { apiRequest } from '../api/client.js';
 import { PunishmentForm } from './ActionForms.jsx';
 
 const emptyOrg = { name: '', type: 'state', rating: 0 };
+const isActivePunishment = (p) => !p.endDate || new Date(p.endDate) > new Date(new Date().toDateString());
 
 export default function AdminTools({ user, users, punishments, logs, punishmentForm, setPunishmentForm, createPunishment }) {
   const [allUsers, setAllUsers] = useState(users || []);
@@ -49,11 +50,8 @@ export default function AdminTools({ user, users, punishments, logs, punishmentF
   async function saveOrganization(event) {
     event.preventDefault();
     try {
-      if (editOrgId) {
-        await apiRequest('/organizations/' + editOrgId, { method: 'PUT', body: JSON.stringify(orgForm) }, user.id);
-      } else {
-        await apiRequest('/organizations', { method: 'POST', body: JSON.stringify(orgForm) }, user.id);
-      }
+      if (editOrgId) await apiRequest('/organizations/' + editOrgId, { method: 'PUT', body: JSON.stringify(orgForm) }, user.id);
+      else await apiRequest('/organizations', { method: 'POST', body: JSON.stringify(orgForm) }, user.id);
       setOrgForm(emptyOrg);
       setEditOrgId(null);
       await loadAdminData();
@@ -73,7 +71,7 @@ export default function AdminTools({ user, users, punishments, logs, punishmentF
     try {
       await apiRequest('/punishments/' + id + '/cancel', { method: 'PATCH' }, user.id);
       await loadAdminData();
-      setMessage('Покарання скасовано.');
+      setMessage('Покарання скасовано і воно більше не активне.');
     } catch (err) { setMessage(err.message); }
   }
 
@@ -119,7 +117,10 @@ export default function AdminTools({ user, users, punishments, logs, punishmentF
 
       <div className="mini-card">
         <h3>Покарання</h3>
-        {allPunishments.map((p) => <p key={p.id}>{p.nickname}: {String(p.type).toUpperCase()} — {p.reason} <button onClick={() => cancelPunishment(p.id)}>Скасувати</button></p>)}
+        {allPunishments.map((p) => {
+          const active = p.active !== undefined ? p.active : isActivePunishment(p);
+          return <p key={p.id}>{p.nickname}: {String(p.type).toUpperCase()} — {p.reason} <b className={active ? 'status-active' : 'status-inactive'}>{active ? 'Активне' : 'Неактивне'}</b> {active && <button onClick={() => cancelPunishment(p.id)}>Скасувати</button>}</p>;
+        })}
       </div>
 
       <div className="mini-card wide">
