@@ -15,7 +15,7 @@ app.use(cors());
 app.use(express.json());
 
 async function activePunishments(userId) {
-  const { rows } = await pool.query('select id,type,reason,start_date as "startDate",end_date as "endDate" from punishments where user_id=$1 and (end_date is null or end_date >= current_date) order by id desc', [userId]);
+  const { rows } = await pool.query('select id,type,reason,start_date as "startDate",end_date as "endDate" from punishments where user_id=$1 and (end_date is null or end_date > current_date) order by id desc', [userId]);
   return rows.map((p) => ({ ...p, type: String(p.type).toLowerCase() }));
 }
 function hasPunishment(list, type) { return list.some((p) => p.type === type.toLowerCase()); }
