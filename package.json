@@ -1,7 +1,7 @@
 {
   "name": "rp-role-management-system",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.3.0",
   "type": "module",
   "scripts": {
     "dev": "concurrently \"npm run server\" \"npm run client\"",
@@ -20,7 +20,8 @@
     "express": "latest",
     "pg": "latest",
     "cors": "latest",
-    "dotenv": "latest"
+    "dotenv": "latest",
+    "bcryptjs": "latest"
   },
   "devDependencies": {
     "concurrently": "latest",
