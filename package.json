@@ -21,7 +21,8 @@
     "pg": "latest",
     "cors": "latest",
     "dotenv": "latest",
-    "bcryptjs": "latest"
+    "bcryptjs": "latest",
+    "discord.js": "latest"
   },
   "devDependencies": {
     "concurrently": "latest",
