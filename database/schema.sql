@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS organizations (
   type VARCHAR(32) NOT NULL,
   rating NUMERIC(3,1) DEFAULT 0,
   created_at DATE DEFAULT CURRENT_DATE,
-  members INTEGER DEFAULT 0
+  members INTEGER DEFAULT 0,
+  discord_role_id VARCHAR(64)
 );
 
 CREATE TABLE IF NOT EXISTS players (
