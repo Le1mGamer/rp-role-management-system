@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { apiRequest } from '../api/client.js';
 import { PunishmentForm } from './ActionForms.jsx';
 
-const emptyOrg = { name: '', type: 'state', rating: 0 };
+const emptyOrg = { name: '', type: 'state', rating: 0, discordRoleId: '' };
 const isActivePunishment = (p) => !p.endDate || new Date(p.endDate) > new Date(new Date().toDateString());
 
 export default function AdminTools({ user, users, punishments, logs, punishmentForm, setPunishmentForm, createPunishment }) {
@@ -43,7 +43,23 @@ export default function AdminTools({ user, users, punishments, logs, punishmentF
       }, user.id);
       setRoleForm({ userId: '', role: 'player', organizationId: '' });
       await loadAdminData();
-      setMessage('Роль користувача оновлено.');
+      setMessage('Роль користувача оновлено і синхронізовано з Discord.');
+    } catch (err) { setMessage(err.message); }
+  }
+
+  async function syncSelectedUser() {
+    if (!roleForm.userId) return setMessage('Спочатку оберіть користувача у блоці керування ролями.');
+    try {
+      const result = await apiRequest('/discord/sync/' + roleForm.userId, { method: 'POST' }, user.id);
+      setMessage(result.ok ? 'Discord-ролі користувача синхронізовано.' : 'Синхронізацію пропущено: ' + result.reason);
+    } catch (err) { setMessage(err.message); }
+  }
+
+  async function syncAllDiscord() {
+    try {
+      const result = await apiRequest('/discord/sync-all', { method: 'POST' }, user.id);
+      const okCount = result.filter((item) => item.ok).length;
+      setMessage('Discord-синхронізація завершена. Успішно: ' + okCount + ' з ' + result.length + '.');
     } catch (err) { setMessage(err.message); }
   }
 
@@ -55,7 +71,7 @@ export default function AdminTools({ user, users, punishments, logs, punishmentF
       setOrgForm(emptyOrg);
       setEditOrgId(null);
       await loadAdminData();
-      setMessage('Організацію збережено.');
+      setMessage('Організацію збережено. Якщо вказано Discord Role ID, учасників буде синхронізовано.');
     } catch (err) { setMessage(err.message); }
   }
 
@@ -63,7 +79,7 @@ export default function AdminTools({ user, users, punishments, logs, punishmentF
     try {
       await apiRequest('/organizations/' + id, { method: 'DELETE' }, user.id);
       await loadAdminData();
-      setMessage('Організацію видалено.');
+      setMessage('Організацію видалено, Discord-роль організації знято з прив’язаних користувачів.');
     } catch (err) { setMessage(err.message); }
   }
 
@@ -71,7 +87,7 @@ export default function AdminTools({ user, users, punishments, logs, punishmentF
     try {
       await apiRequest('/punishments/' + id + '/cancel', { method: 'PATCH' }, user.id);
       await loadAdminData();
-      setMessage('Покарання скасовано і воно більше не активне.');
+      setMessage('Покарання скасовано і Discord-ролі користувача оновлено.');
     } catch (err) { setMessage(err.message); }
   }
 
@@ -91,7 +107,7 @@ export default function AdminTools({ user, users, punishments, logs, punishmentF
         <h3>Керування ролями</h3>
         <select required value={roleForm.userId} onChange={(e) => setRoleForm({ ...roleForm, userId: e.target.value })}>
           <option value="">Оберіть користувача</option>
-          {allUsers.map((u) => <option key={u.id} value={u.id}>{u.nickname} · {u.role}</option>)}
+          {allUsers.map((u) => <option key={u.id} value={u.id}>{u.nickname} · {u.role}{u.discordId ? ' · Discord OK' : ' · Discord не прив’язано'}</option>)}
         </select>
         <select value={roleForm.role} onChange={(e) => setRoleForm({ ...roleForm, role: e.target.value })}>
           <option value="player">player</option>
@@ -103,6 +119,8 @@ export default function AdminTools({ user, users, punishments, logs, punishmentF
           {organizations.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}
         </select>}
         <button className="primary-btn">Оновити роль</button>
+        <button type="button" onClick={syncSelectedUser}>Синхронізувати обраного з Discord</button>
+        <button type="button" onClick={syncAllDiscord}>Синхронізувати всіх з Discord</button>
       </form>
 
       <form className="action-form" onSubmit={saveOrganization}>
@@ -112,6 +130,7 @@ export default function AdminTools({ user, users, punishments, logs, punishmentF
           <option value="state">state</option><option value="family">family</option><option value="private">private</option>
         </select>
         <input type="number" step="0.1" placeholder="Рейтинг" value={orgForm.rating} onChange={(e) => setOrgForm({ ...orgForm, rating: Number(e.target.value) })} />
+        <input placeholder="Discord Role ID організації" value={orgForm.discordRoleId} onChange={(e) => setOrgForm({ ...orgForm, discordRoleId: e.target.value })} />
         <div className="form-actions"><button className="primary-btn">Зберегти</button>{editOrgId && <button type="button" onClick={() => { setEditOrgId(null); setOrgForm(emptyOrg); }}>Скасувати</button>}</div>
       </form>
 
@@ -125,7 +144,7 @@ export default function AdminTools({ user, users, punishments, logs, punishmentF
 
       <div className="mini-card wide">
         <h3>Організації</h3>
-        {organizations.map((o) => <p key={o.id}>{o.name} · {o.type} · rating {o.rating} <button onClick={() => { setEditOrgId(o.id); setOrgForm({ name: o.name, type: o.type, rating: Number(o.rating) }); }}>Редагувати</button><button onClick={() => removeOrganization(o.id)}>Видалити</button></p>)}
+        {organizations.map((o) => <p key={o.id}>{o.name} · {o.type} · rating {o.rating}{o.discordRoleId ? ' · Discord role: ' + o.discordRoleId : ' · Discord role не вказано'} <button onClick={() => { setEditOrgId(o.id); setOrgForm({ name: o.name, type: o.type, rating: Number(o.rating), discordRoleId: o.discordRoleId || '' }); }}>Редагувати</button><button onClick={() => removeOrganization(o.id)}>Видалити</button></p>)}
       </div>
 
       <div className="mini-card wide">
