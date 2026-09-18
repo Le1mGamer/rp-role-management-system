@@ -73,20 +73,67 @@ function App() {
 
   async function loadData(user = currentUser) {
     if (!user) return;
+
+    const warnings = [];
+    const next = {
+      ...seedData,
+      ...data,
+      rules: data.rules?.length ? data.rules : seedData.rules,
+      organizations: data.organizations?.length ? data.organizations : seedData.organizations,
+      applications: data.applications || [],
+      players: data.players?.length ? data.players : seedData.players,
+      logs: data.logs || [],
+      users: data.users?.length ? data.users : seedData.users,
+      punishments: data.punishments || [],
+    };
+
+    const loadOptional = async (path, fallback) => {
+      try {
+        return await apiRequest(path, {}, user.id);
+      } catch (err) {
+        warnings.push(err.message);
+        return fallback;
+      }
+    };
+
     try {
-      const next = { ...data };
       const profile = await apiRequest('/profile', {}, user.id);
-      applyProfile(profile);
-      next.rules = await apiRequest('/rules', {}, user.id);
-      next.organizations = await apiRequest('/organizations', {}, user.id);
-      next.applications = await apiRequest('/applications', {}, user.id);
-      next.players = await apiRequest('/players', {}, user.id);
-      if (['leader', 'admin'].includes(user.role)) next.logs = await apiRequest('/logs', {}, user.id);
-      if (user.role === 'leader') setLeaderOrg(await apiRequest('/leader/organization', {}, user.id));
-      if (user.role === 'admin') { next.users = await apiRequest('/users', {}, user.id); next.punishments = await apiRequest('/punishments', {}, user.id); }
-      setData(next); setApiError('');
+      const activeUser = profile || user;
+      applyProfile(activeUser);
+
+      next.rules = await loadOptional('/rules', next.rules);
+      next.organizations = await loadOptional('/organizations', next.organizations);
+      next.applications = await loadOptional('/applications', []);
+      next.players = await loadOptional('/players', []);
+
+      if (['leader', 'admin'].includes(activeUser.role)) {
+        next.logs = await loadOptional('/logs', []);
+      } else {
+        next.logs = [];
+      }
+
+      if (activeUser.role === 'leader') {
+        setLeaderOrg(await loadOptional('/leader/organization', null));
+      } else {
+        setLeaderOrg(null);
+      }
+
+      if (activeUser.role === 'admin') {
+        next.users = await loadOptional('/users', seedData.users);
+        next.punishments = await loadOptional('/punishments', []);
+      } else {
+        next.users = next.users?.length ? next.users : seedData.users;
+        next.punishments = [];
+      }
+
+      setData(next);
+      if (warnings.length) {
+        setApiError('Дані з PostgreSQL завантажено частково. Проблемні запити: ' + warnings.join(' | '));
+      } else {
+        setApiError('');
+      }
     } catch (err) {
-      setApiError((err?.message ? err.message + '. ' : '') + 'API недоступне або PostgreSQL ще не запущено. Показано локальні seed-дані.');
+      setApiError('Не вдалося отримати профіль з backend/PostgreSQL: ' + err.message);
     }
   }
 
@@ -111,12 +158,15 @@ function App() {
     try {
       const u = await apiRequest('/auth/login', { method: 'POST', body: JSON.stringify({ nickname, password }) });
       applyProfile(u); setLoginError(''); setApiError(''); changeTab('cabinet');
-    } catch {
+    } catch (err) {
       const u = seedData.users.find((x) => x.nickname.toLowerCase() === nickname.trim().toLowerCase() && x.password === password && x.status !== 'banned');
-      if (!u) { setLoginError(t.loginError); return; }
-      applyProfile(u); setApiError('API недоступне або PostgreSQL ще не запущено. Показано локальні seed-дані.'); changeTab('cabinet');
+      if (!u) { setLoginError(err.message || t.loginError); return; }
+      applyProfile(u);
+      setApiError('Backend/PostgreSQL недоступні, виконано демо-вхід на локальних seed-даних: ' + err.message);
+      changeTab('cabinet');
     }
   }
+
   async function saveProfile(e) { e.preventDefault(); try { const u = await apiRequest('/profile', { method: 'PUT', body: JSON.stringify(profileForm) }, currentUser.id); applyProfile(u); await loadData(u); } catch (err) { setApiError(err.message); } }
   function logout() { applyProfile(null); setLeaderOrg(null); setProfileForm(emptyProfile); setData(seedData); setQuery(''); changeTab('cabinet'); }
   const reload = () => loadData(currentUser);
