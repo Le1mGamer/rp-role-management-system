@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import bcrypt from 'bcryptjs';
 import { pool } from './pool.js';
+import { startDiscordBot, syncDiscordRoles, syncAllDiscordRoles, removeDiscordRoleFromUser } from './discordBot.js';
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -20,6 +21,13 @@ async function activePunishments(userId) {
 }
 function hasPunishment(list, type) { return list.some((p) => p.type === type.toLowerCase()); }
 function deny(res, message) { return res.status(403).json({ message }); }
+async function syncUserSafely(userId) { try { return await syncDiscordRoles(userId); } catch (error) { console.error('Discord sync failed:', error.message); return { ok: false, reason: error.message }; } }
+async function syncOrgUsersSafely(orgId) {
+  const { rows } = await pool.query('select distinct user_id as "userId" from players where organization_id=$1 union select distinct user_id as "userId" from leaders where organization_id=$1', [orgId]);
+  const results = [];
+  for (const row of rows) results.push(await syncUserSafely(row.userId));
+  return results;
+}
 
 const auth = (roles) => async (req, res, next) => {
   const id = Number(req.header('x-user-id'));
@@ -38,7 +46,7 @@ async function refreshOrgMembers(orgId) {
   await pool.query('update leaders set members_count=(select count(*) from players where organization_id=$1) where organization_id=$1', [orgId]);
 }
 async function publicUser(userId) {
-  const { rows } = await pool.query('select id,nickname,email,role,status,last_login as "lastLogin",birth_date as "birthDate",profile_description as "profileDescription" from users where id=$1', [userId]);
+  const { rows } = await pool.query('select id,nickname,email,role,status,last_login as "lastLogin",birth_date as "birthDate",profile_description as "profileDescription",discord_id as "discordId" from users where id=$1', [userId]);
   return rows[0] ? { ...rows[0], punishments: await activePunishments(userId) } : null;
 }
 
@@ -53,13 +61,10 @@ app.post('/api/auth/login', async (req, res) => {
   if (!user || user.status === 'banned') return res.status(401).json({ message: 'Invalid login or blocked account' });
   let ok = false;
   if (user.password_hash) ok = await bcrypt.compare(password, user.password_hash).catch(() => false);
-  if (!ok && user.password === password) {
-    const hash = await bcrypt.hash(password, 10);
-    await pool.query('update users set password_hash=$1 where id=$2', [hash, user.id]);
-    ok = true;
-  }
+  if (!ok && user.password === password) { const hash = await bcrypt.hash(password, 10); await pool.query('update users set password_hash=$1 where id=$2', [hash, user.id]); ok = true; }
   if (!ok) return res.status(401).json({ message: 'Invalid login or blocked account' });
   await pool.query('update users set last_login=now() where id=$1', [user.id]);
+  await syncUserSafely(user.id);
   res.json(await publicUser(user.id));
 });
 
@@ -94,6 +99,7 @@ app.get('/api/auth/discord/callback', async (req, res) => {
   } else {
     await pool.query('update users set discord_id=$1,email=coalesce(email,$2),last_login=now() where id=$3', [discordUser.id, email, id]);
   }
+  await syncUserSafely(id);
   res.redirect(CLIENT_URL + '?discord_user_id=' + id);
 });
 
@@ -108,7 +114,7 @@ app.put('/api/profile', auth(['player','leader','admin']), async (req, res) => {
 
 app.get('/api/users', auth(['leader','admin']), async (req, res) => {
   const emailField = req.user.role === 'admin' ? 'email' : 'null as email';
-  const { rows } = await pool.query('select id,nickname,' + emailField + ',role,status,last_login as "lastLogin",birth_date as "birthDate",profile_description as "profileDescription" from users order by id');
+  const { rows } = await pool.query('select id,nickname,' + emailField + ',role,status,last_login as "lastLogin",birth_date as "birthDate",profile_description as "profileDescription",discord_id as "discordId" from users order by id');
   res.json(rows);
 });
 app.patch('/api/users/:id/role', auth(['admin']), async (req, res) => {
@@ -120,6 +126,7 @@ app.patch('/api/users/:id/role', auth(['admin']), async (req, res) => {
   if (role === 'admin') { await pool.query('insert into admins(user_id,access_level,permissions,super_admin) values($1,3,$2,false) on conflict do nothing', [userId, ['users','rules','logs']]); await pool.query('delete from leaders where user_id=$1', [userId]); }
   if (role === 'leader') { if (!organizationId) return res.status(400).json({ message: 'organizationId required for leader' }); await pool.query('insert into leaders(user_id,organization_id,rank,members_count) values($1,$2,$3,0) on conflict (user_id) do update set organization_id=excluded.organization_id', [userId, Number(organizationId), 'Leader']); await pool.query('delete from admins where user_id=$1', [userId]); }
   await log(req.user.id, 'Змінив роль користувача #' + userId + ' на ' + role);
+  await syncUserSafely(userId);
   res.json(await publicUser(userId));
 });
 
@@ -131,10 +138,10 @@ app.get('/api/players', auth(['player','leader','admin']), async (req, res) => {
   res.json(rows);
 });
 
-app.get('/api/organizations', auth(['player','leader','admin']), async (_req, res) => { const { rows } = await pool.query('select id,name,type,rating,created_at as "createdAt",members from organizations order by id'); res.json(rows); });
-app.post('/api/organizations', auth(['admin']), async (req, res) => { const { name, type, rating } = req.body; const { rows } = await pool.query('insert into organizations(name,type,rating,created_at,members) values($1,$2,$3,current_date,0) returning id,name,type,rating,created_at as "createdAt",members', [name, type, rating || 0]); await log(req.user.id, 'Створив організацію ' + name); res.status(201).json(rows[0]); });
-app.put('/api/organizations/:id', auth(['admin']), async (req, res) => { const { name, type, rating } = req.body; const { rows } = await pool.query('update organizations set name=$1,type=$2,rating=$3 where id=$4 returning id,name,type,rating,created_at as "createdAt",members', [name, type, rating || 0, req.params.id]); await log(req.user.id, 'Оновив організацію #' + req.params.id); res.json(rows[0]); });
-app.delete('/api/organizations/:id', auth(['admin']), async (req, res) => { await pool.query('update players set organization_id=null where organization_id=$1', [req.params.id]); await pool.query('delete from leaders where organization_id=$1', [req.params.id]); await pool.query('delete from applications where organization_id=$1', [req.params.id]); await pool.query('delete from organizations where id=$1', [req.params.id]); await log(req.user.id, 'Видалив організацію #' + req.params.id); res.status(204).end(); });
+app.get('/api/organizations', auth(['player','leader','admin']), async (_req, res) => { const { rows } = await pool.query('select id,name,type,rating,created_at as "createdAt",members,discord_role_id as "discordRoleId" from organizations order by id'); res.json(rows); });
+app.post('/api/organizations', auth(['admin']), async (req, res) => { const { name, type, rating, discordRoleId } = req.body; const { rows } = await pool.query('insert into organizations(name,type,rating,created_at,members,discord_role_id) values($1,$2,$3,current_date,0,$4) returning id,name,type,rating,created_at as "createdAt",members,discord_role_id as "discordRoleId"', [name, type, rating || 0, discordRoleId || null]); await log(req.user.id, 'Створив організацію ' + name); res.status(201).json(rows[0]); });
+app.put('/api/organizations/:id', auth(['admin']), async (req, res) => { const { name, type, rating, discordRoleId } = req.body; const { rows } = await pool.query('update organizations set name=$1,type=$2,rating=$3,discord_role_id=$4 where id=$5 returning id,name,type,rating,created_at as "createdAt",members,discord_role_id as "discordRoleId"', [name, type, rating || 0, discordRoleId || null, req.params.id]); await log(req.user.id, 'Оновив організацію #' + req.params.id); await syncOrgUsersSafely(req.params.id); res.json(rows[0]); });
+app.delete('/api/organizations/:id', auth(['admin']), async (req, res) => { const orgId = Number(req.params.id); const old = await pool.query('select discord_role_id as "discordRoleId" from organizations where id=$1', [orgId]); const affected = await pool.query('select distinct user_id as "userId" from players where organization_id=$1 union select distinct user_id as "userId" from leaders where organization_id=$1', [orgId]); await pool.query('update players set organization_id=null where organization_id=$1', [orgId]); await pool.query('delete from leaders where organization_id=$1', [orgId]); await pool.query('delete from applications where organization_id=$1', [orgId]); await pool.query('delete from organizations where id=$1', [orgId]); for (const row of affected.rows) { if (old.rows[0]?.discordRoleId) await removeDiscordRoleFromUser(row.userId, old.rows[0].discordRoleId).catch(()=>null); await syncUserSafely(row.userId); } await log(req.user.id, 'Видалив організацію #' + req.params.id); res.status(204).end(); });
 
 app.get('/api/rules', auth(['player','leader','admin']), async (req, res) => { const sql = req.user.role === 'admin' ? 'select id,category,title,text,access,updated_at as "updatedAt" from rules order by id' : 'select id,category,title,text,access,updated_at as "updatedAt" from rules where access in ($1,$2) order by id'; const params = req.user.role === 'admin' ? [] : ['all', req.user.role]; const { rows } = await pool.query(sql, params); res.json(rows); });
 app.post('/api/rules', auth(['admin']), async (req, res) => { const { category, title, text, access } = req.body; const { rows } = await pool.query('insert into rules(category,title,text,access,updated_at) values($1,$2,$3,$4,current_date) returning id,category,title,text,access,updated_at as "updatedAt"', [category, title, text, access]); await log(req.user.id, 'Створив правило: ' + title); res.status(201).json(rows[0]); });
@@ -143,19 +150,23 @@ app.delete('/api/rules/:id', auth(['admin']), async (req, res) => { await pool.q
 
 app.get('/api/applications', auth(['player','leader','admin']), async (req, res) => { let sql='select a.id,u.nickname as applicant,o.name as organization,a.type,a.status,a.submitted_at as "submittedAt" from applications a join users u on u.id=a.applicant_id join organizations o on o.id=a.organization_id'; const params=[]; if(req.user.role==='player'){sql+=' where a.applicant_id=$1';params.push(req.user.id);} if(req.user.role==='leader'){sql+=' join leaders l on l.organization_id=a.organization_id where l.user_id=$1';params.push(req.user.id);} const {rows}=await pool.query(sql+' order by a.id',params); res.json(rows); });
 app.post('/api/applications', auth(['player']), async (req, res) => { if(hasPunishment(req.user.punishments,'ban'))return deny(res,'Ban: applications are restricted'); if(hasPunishment(req.user.punishments,'warning'))return deny(res,'Warning: applications are restricted'); const { organizationId, type }=req.body; const exists=await pool.query('select id from applications where applicant_id=$1 and organization_id=$2 and status in ($3,$4,$5)',[req.user.id,Number(organizationId),'pending','reviewing','needs_info']); if(exists.rows[0])return res.status(409).json({message:'Active application already exists'}); const { rows }=await pool.query('insert into applications(applicant_id,organization_id,type,status,submitted_at) values($1,$2,$3,$4,now()) returning id,type,status,submitted_at as "submittedAt"',[req.user.id,Number(organizationId),type||'join_organization','pending']); await log(req.user.id,'Подав заявку до організації #'+organizationId); res.status(201).json(rows[0]); });
-app.patch('/api/applications/:id/status', auth(['leader','admin']), async (req, res) => { const { status }=req.body; if(!['pending','reviewing','needs_info','approved','rejected'].includes(status))return res.status(400).json({message:'Invalid status'}); const { rows }=await pool.query('update applications set status=$1 where id=$2 returning id,status,applicant_id as "applicantId",organization_id as "organizationId"',[status,req.params.id]); if(status==='approved'&&rows[0]){await pool.query('update players set organization_id=$1 where user_id=$2',[rows[0].organizationId,rows[0].applicantId]); await refreshOrgMembers(rows[0].organizationId);} await log(req.user.id,'Змінив статус заявки #'+req.params.id+' на '+status); res.json(rows[0]); });
+app.patch('/api/applications/:id/status', auth(['leader','admin']), async (req, res) => { const { status }=req.body; if(!['pending','reviewing','needs_info','approved','rejected'].includes(status))return res.status(400).json({message:'Invalid status'}); const { rows }=await pool.query('update applications set status=$1 where id=$2 returning id,status,applicant_id as "applicantId",organization_id as "organizationId"',[status,req.params.id]); if(status==='approved'&&rows[0]){await pool.query('update players set organization_id=$1 where user_id=$2',[rows[0].organizationId,rows[0].applicantId]); await refreshOrgMembers(rows[0].organizationId); await syncUserSafely(rows[0].applicantId);} await log(req.user.id,'Змінив статус заявки #'+req.params.id+' на '+status); res.json(rows[0]); });
 
-app.get('/api/punishments', auth(['admin']), async (_req, res) => { const { rows }=await pool.query('select p.id,u.nickname,p.type,p.reason,p.start_date as "startDate",p.end_date as "endDate" from punishments p join users u on u.id=p.user_id order by p.id'); res.json(rows); });
-app.post('/api/punishments', auth(['admin']), async (req,res)=>{const {userId,type,reason,endDate}=req.body; const clean=String(type||'warning').toLowerCase(); if(!['warning','ban','mute'].includes(clean))return res.status(400).json({message:'Invalid punishment type'}); const {rows}=await pool.query('insert into punishments(user_id,type,reason,start_date,end_date) values($1,$2,$3,current_date,$4) returning id,user_id as "userId",type,reason,start_date as "startDate",end_date as "endDate"',[userId,clean,reason,endDate||null]); await log(req.user.id,'Видав покарання '+clean+' користувачу #'+userId); res.status(201).json(rows[0]);});
-app.patch('/api/punishments/:id/cancel', auth(['admin']), async (req,res)=>{const {rows}=await pool.query('update punishments set end_date=current_date where id=$1 returning id,type,reason,start_date as "startDate",end_date as "endDate",user_id as "userId"',[req.params.id]); await log(req.user.id,'Скасував покарання #'+req.params.id); res.json(rows[0]);});
+app.get('/api/punishments', auth(['admin']), async (_req, res) => { const { rows }=await pool.query('select p.id,u.nickname,p.type,p.reason,p.start_date as "startDate",p.end_date as "endDate",case when p.end_date is null or p.end_date > current_date then true else false end as active from punishments p join users u on u.id=p.user_id order by p.id'); res.json(rows); });
+app.post('/api/punishments', auth(['admin']), async (req,res)=>{const {userId,type,reason,endDate}=req.body; const clean=String(type||'warning').toLowerCase(); if(!['warning','ban','mute'].includes(clean))return res.status(400).json({message:'Invalid punishment type'}); const {rows}=await pool.query('insert into punishments(user_id,type,reason,start_date,end_date) values($1,$2,$3,current_date,$4) returning id,user_id as "userId",type,reason,start_date as "startDate",end_date as "endDate"',[userId,clean,reason,endDate||null]); await log(req.user.id,'Видав покарання '+clean+' користувачу #'+userId); await syncUserSafely(userId); res.status(201).json(rows[0]);});
+app.patch('/api/punishments/:id/cancel', auth(['admin']), async (req,res)=>{const {rows}=await pool.query('update punishments set end_date=current_date where id=$1 returning id,type,reason,start_date as "startDate",end_date as "endDate",user_id as "userId"',[req.params.id]); await log(req.user.id,'Скасував покарання #'+req.params.id); if(rows[0]) await syncUserSafely(rows[0].userId); res.json(rows[0]);});
 
 app.get('/api/reports/activity', auth(['admin']), async (_req,res)=>{const {rows}=await pool.query('select u.nickname,u.role,u.status,u.last_login as "lastLogin",count(l.id) as actions from users u left join logs l on l.user_id=u.id group by u.id order by u.id');res.json(rows);});
 app.get('/api/reports/players', auth(['admin']), async (_req,res)=>{const {rows}=await pool.query('select u.nickname,p.level,p.experience,p.reputation,o.name as organization from players p join users u on u.id=p.user_id left join organizations o on o.id=p.organization_id order by p.id');res.json(rows);});
-app.get('/api/reports/organizations', auth(['admin']), async (_req,res)=>{const {rows}=await pool.query('select o.name,o.type,o.rating,o.members,u.nickname as leader from organizations o left join leaders l on l.organization_id=o.id left join users u on u.id=l.user_id order by o.id');res.json(rows);});
+app.get('/api/reports/organizations', auth(['admin']), async (_req,res)=>{const {rows}=await pool.query('select o.name,o.type,o.rating,o.members,o.discord_role_id as "discordRoleId",u.nickname as leader from organizations o left join leaders l on l.organization_id=o.id left join users u on u.id=l.user_id order by o.id');res.json(rows);});
 app.get('/api/reports/applications', auth(['admin']), async (_req,res)=>{const {rows}=await pool.query('select status,count(*) from applications group by status order by status');res.json(rows);});
-app.get('/api/reports/punishments', auth(['admin']), async (_req,res)=>{const {rows}=await pool.query('select u.nickname,p.type,p.reason,p.start_date as "startDate",p.end_date as "endDate" from punishments p join users u on u.id=p.user_id order by p.id');res.json(rows);});
+app.get('/api/reports/punishments', auth(['admin']), async (_req,res)=>{const {rows}=await pool.query('select u.nickname,p.type,p.reason,p.start_date as "startDate",p.end_date as "endDate",case when p.end_date is null or p.end_date > current_date then true else false end as active from punishments p join users u on u.id=p.user_id order by p.id');res.json(rows);});
+
+app.post('/api/discord/sync/:id', auth(['admin']), async (req,res)=>{const result=await syncUserSafely(Number(req.params.id)); await log(req.user.id,'Запустив Discord-синхронізацію користувача #'+req.params.id); res.json(result);});
+app.post('/api/discord/sync-all', auth(['admin']), async (req,res)=>{const results=await syncAllDiscordRoles(); await log(req.user.id,'Запустив повну Discord-синхронізацію ролей'); res.json(results);});
 
 app.get('/api/forum/messages', auth(['player','leader','admin']), async (req,res)=>{if(hasPunishment(req.user.punishments,'ban'))return deny(res,'Ban: forum chat reading is restricted'); const {rows}=await pool.query('select m.id,m.message,m.created_at as "createdAt",u.nickname,u.role from forum_messages m join users u on u.id=m.user_id order by m.created_at asc limit 100');res.json(rows);});
 app.post('/api/forum/messages', auth(['player','leader','admin']), async (req,res)=>{if(hasPunishment(req.user.punishments,'ban'))return deny(res,'Ban: forum chat is restricted'); if(hasPunishment(req.user.punishments,'mute'))return deny(res,'Mute: sending messages is restricted'); const message=String(req.body.message||'').trim(); if(!message)return res.status(400).json({message:'Message is empty'}); const {rows}=await pool.query('insert into forum_messages(user_id,message,created_at) values($1,$2,now()) returning id,message,created_at as "createdAt"',[req.user.id,message]); await log(req.user.id,'Надіслав повідомлення у загальний чат'); res.status(201).json({...rows[0],nickname:req.user.nickname,role:req.user.role});});
 app.get('/api/logs', auth(['leader','admin']), async (_req,res)=>{const {rows}=await pool.query('select l.id,u.nickname,l.action,l.timestamp from logs l join users u on u.id=l.user_id order by l.timestamp desc');res.json(rows);});
-app.listen(PORT,()=>console.log('Server started on http://localhost:'+PORT));
+
+app.listen(PORT,()=>{ console.log('Server started on http://localhost:'+PORT); startDiscordBot(); });
