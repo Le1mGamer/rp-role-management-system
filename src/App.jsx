@@ -7,6 +7,8 @@ import ForumPage from './components/ForumPage.jsx';
 
 const emptyRule = { category: '', title: '', text: '', access: 'all' };
 const emptyProfile = { email: '', birthDate: '', profileDescription: '' };
+const USER_STORAGE_KEY = 'rpms_user';
+const TAB_STORAGE_KEY = 'rpms_active_tab';
 const normDate = (v) => v ? String(v).slice(0, 10) : '';
 const tabs = [
   { id: 'rules', label: 'Правила' }, { id: 'organizations', label: 'Організації' },
@@ -14,13 +16,27 @@ const tabs = [
   { id: 'forum', label: 'Форум' }, { id: 'admin', label: 'Адмін панель' }, { id: 'logs', label: 'Логи' }
 ];
 
+function readSavedUser() {
+  try {
+    const raw = localStorage.getItem(USER_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch {
+    localStorage.removeItem(USER_STORAGE_KEY);
+    return null;
+  }
+}
+
+function readSavedTab() {
+  return localStorage.getItem(TAB_STORAGE_KEY) || 'rules';
+}
+
 function App() {
   const [language, setLanguage] = useState('uk');
-  const [activeTab, setActiveTab] = useState('rules');
+  const [activeTab, setActiveTab] = useState(readSavedTab);
   const [query, setQuery] = useState('');
   const [nickname, setNickname] = useState('John_Vancheti');
   const [password, setPassword] = useState('Player123!');
-  const [currentUser, setCurrentUser] = useState(null);
+  const [currentUser, setCurrentUser] = useState(readSavedUser);
   const [profileForm, setProfileForm] = useState(emptyProfile);
   const [loginError, setLoginError] = useState('');
   const [apiError, setApiError] = useState('');
@@ -43,8 +59,15 @@ function App() {
   const navTabs = tabs.filter((tab) => allowedTabs.includes(tab.id));
   const q = query.toLowerCase();
 
+  function changeTab(tab) {
+    setActiveTab(tab);
+    localStorage.setItem(TAB_STORAGE_KEY, tab);
+  }
+
   function applyProfile(user) {
     setCurrentUser(user);
+    if (user) localStorage.setItem(USER_STORAGE_KEY, JSON.stringify(user));
+    else localStorage.removeItem(USER_STORAGE_KEY);
     setProfileForm({ email: user?.email || '', birthDate: normDate(user?.birthDate), profileDescription: user?.profileDescription || '' });
   }
 
@@ -62,18 +85,45 @@ function App() {
       if (user.role === 'leader') setLeaderOrg(await apiRequest('/leader/organization', {}, user.id));
       if (user.role === 'admin') { next.users = await apiRequest('/users', {}, user.id); next.punishments = await apiRequest('/punishments', {}, user.id); }
       setData(next); setApiError('');
-    } catch { setApiError('API недоступне або PostgreSQL ще не запущено. Показано локальні seed-дані.'); }
+    } catch (err) {
+      setApiError((err?.message ? err.message + '. ' : '') + 'API недоступне або PostgreSQL ще не запущено. Показано локальні seed-дані.');
+    }
   }
+
   useEffect(() => { loadData(); }, [currentUser?.id]);
 
-  async function handleLogin(e) { e.preventDefault(); try { const u = await apiRequest('/auth/login', { method: 'POST', body: JSON.stringify({ nickname, password }) }); applyProfile(u); setLoginError(''); setApiError(''); setActiveTab('cabinet'); } catch { const u = seedData.users.find((x) => x.nickname.toLowerCase() === nickname.trim().toLowerCase() && x.password === password && x.status !== 'banned'); if (!u) { setLoginError(t.loginError); return; } applyProfile(u); setApiError('API недоступне або PostgreSQL ще не запущено. Показано локальні seed-дані.'); setActiveTab('cabinet'); } }
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const discordUserId = params.get('discord_user_id');
+    if (!discordUserId) return;
+    apiRequest('/profile', {}, Number(discordUserId))
+      .then((u) => { applyProfile(u); changeTab('cabinet'); setApiError(''); })
+      .catch((err) => setApiError(err.message))
+      .finally(() => window.history.replaceState({}, '', window.location.pathname));
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'cabinet' && !allowedTabs.includes(activeTab)) changeTab('rules');
+  }, [allowedTabs, activeTab]);
+
+  async function handleLogin(e) {
+    e.preventDefault();
+    try {
+      const u = await apiRequest('/auth/login', { method: 'POST', body: JSON.stringify({ nickname, password }) });
+      applyProfile(u); setLoginError(''); setApiError(''); changeTab('cabinet');
+    } catch {
+      const u = seedData.users.find((x) => x.nickname.toLowerCase() === nickname.trim().toLowerCase() && x.password === password && x.status !== 'banned');
+      if (!u) { setLoginError(t.loginError); return; }
+      applyProfile(u); setApiError('API недоступне або PostgreSQL ще не запущено. Показано локальні seed-дані.'); changeTab('cabinet');
+    }
+  }
   async function saveProfile(e) { e.preventDefault(); try { const u = await apiRequest('/profile', { method: 'PUT', body: JSON.stringify(profileForm) }, currentUser.id); applyProfile(u); await loadData(u); } catch (err) { setApiError(err.message); } }
-  function logout() { setCurrentUser(null); setLeaderOrg(null); setProfileForm(emptyProfile); setData(seedData); setQuery(''); setActiveTab('cabinet'); }
+  function logout() { applyProfile(null); setLeaderOrg(null); setProfileForm(emptyProfile); setData(seedData); setQuery(''); changeTab('cabinet'); }
   const reload = () => loadData(currentUser);
   async function saveRule(e) { e.preventDefault(); try { const body = JSON.stringify(ruleForm); if (editRuleId) await apiRequest(`/rules/${editRuleId}`, { method: 'PUT', body }, currentUser.id); else await apiRequest('/rules', { method: 'POST', body }, currentUser.id); setRuleForm(emptyRule); setEditRuleId(null); await reload(); } catch (err) { setApiError(err.message); } }
   async function removeRule(id) { try { await apiRequest(`/rules/${id}`, { method: 'DELETE' }, currentUser.id); await reload(); } catch (err) { setApiError(err.message); } }
   async function setAppStatus(id, status) { try { await apiRequest(`/applications/${id}/status`, { method: 'PATCH', body: JSON.stringify({ status }) }, currentUser.id); await reload(); } catch (err) { setApiError(err.message); } }
-  async function submitApplication(e) { e.preventDefault(); if (!currentUser) { setActiveTab('cabinet'); return; } try { await apiRequest('/applications', { method: 'POST', body: JSON.stringify({ organizationId: Number(appForm.organizationId), type: appForm.type }) }, currentUser.id); setAppForm({ organizationId: '', type: 'join_organization' }); await reload(); } catch (err) { setApiError(err.message); } }
+  async function submitApplication(e) { e.preventDefault(); if (!currentUser) { changeTab('cabinet'); return; } try { await apiRequest('/applications', { method: 'POST', body: JSON.stringify({ organizationId: Number(appForm.organizationId), type: appForm.type }) }, currentUser.id); setAppForm({ organizationId: '', type: 'join_organization' }); await reload(); } catch (err) { setApiError(err.message); } }
   async function addMember(e) { e.preventDefault(); try { await apiRequest(`/players/${memberUserId}/organization`, { method: 'PATCH', body: JSON.stringify({ organizationId: leaderOrg?.id }) }, currentUser.id); setMemberUserId(''); await reload(); } catch (err) { setApiError(err.message); } }
   async function removeMember(userId) { try { await apiRequest(`/players/${userId}/organization`, { method: 'PATCH', body: JSON.stringify({ organizationId: null }) }, currentUser.id); await reload(); } catch (err) { setApiError(err.message); } }
   async function createPunishment(e) { e.preventDefault(); try { await apiRequest('/punishments', { method: 'POST', body: JSON.stringify({ ...punishmentForm, userId: Number(punishmentForm.userId) }) }, currentUser.id); setPunishmentForm({ userId: '', type: 'warning', reason: '', endDate: '' }); await reload(); } catch (err) { setApiError(err.message); } }
@@ -85,7 +135,7 @@ function App() {
   const orgMembers = currentUser?.role === 'leader' && leaderOrg ? data.players.filter((p) => (p.organizationId || p.organization_id) === leaderOrg.id) : [];
   const freePlayers = data.players.filter((p) => !p.organizationId && !p.organization_id);
 
-  return <div className="site-shell"><div className="hero-bg" /><header className="glass-header"><div className="brand-pill">RPMS</div><nav className="top-nav">{navTabs.map((tab) => <button key={tab.id} className={activeTab === tab.id ? 'active' : ''} onClick={() => setActiveTab(tab.id)}>{tab.label}</button>)}</nav><div className="header-actions"><button className={`dark-btn ${activeTab === 'cabinet' ? 'active' : ''}`} onClick={() => setActiveTab('cabinet')}>Кабінет →</button><button className={`accent-btn ${activeTab === 'applications' ? 'active' : ''}`} onClick={() => setActiveTab('applications')}>Подати заявку</button></div></header><section className="hero-title"><h1>RP ROLE<br />MANAGEMENT</h1><p>Система керування правилами, ролями, організаціями та заявками RP-сервера</p></section><main className="landing-content">{apiError && <div className="warning-box">{apiError}</div>}{activeTab !== 'cabinet' && activeTab !== 'forum' && <div className="search-box"><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Пошук у поточному розділі..." /></div>}{activeTab === 'rules' && <RulesView rules={rules} user={currentUser} ruleForm={ruleForm} setRuleForm={setRuleForm} editRuleId={editRuleId} setEditRuleId={setEditRuleId} saveRule={saveRule} removeRule={removeRule} />}{activeTab === 'applications' && <ApplicationsView apps={apps} user={currentUser} organizations={data.organizations} appForm={appForm} setAppForm={setAppForm} submitApplication={submitApplication} change={setAppStatus} t={t} setActiveTab={setActiveTab} />}{activeTab === 'organizations' && <OrganizationsView organizations={data.organizations} />}{activeTab === 'players' && <PlayersView user={currentUser} players={filteredPlayers} usersById={usersById} orgsById={orgsById} leaderOrg={leaderOrg} orgMembers={orgMembers} freePlayers={freePlayers} memberUserId={memberUserId} setMemberUserId={setMemberUserId} addMember={addMember} removeMember={removeMember} />}{activeTab === 'forum' && <ForumPage user={currentUser} setActiveTab={setActiveTab} />}{activeTab === 'admin' && <AdminView user={currentUser} users={data.users} punishments={data.punishments} logs={logs} punishmentForm={punishmentForm} setPunishmentForm={setPunishmentForm} createPunishment={createPunishment} />}{activeTab === 'logs' && <LogsView logs={logs} />}{activeTab === 'cabinet' && <CabinetView user={currentUser} nickname={nickname} password={password} profileForm={profileForm} setProfileForm={setProfileForm} setNickname={setNickname} setPassword={setPassword} handleLogin={handleLogin} saveProfile={saveProfile} logout={logout} loginError={loginError} language={language} setLanguage={setLanguage} />}</main></div>;
+  return <div className="site-shell"><div className="hero-bg" /><header className="glass-header"><div className="brand-pill">RPMS</div><nav className="top-nav">{navTabs.map((tab) => <button key={tab.id} className={activeTab === tab.id ? 'active' : ''} onClick={() => changeTab(tab.id)}>{tab.label}</button>)}</nav><div className="header-actions"><button className={`dark-btn ${activeTab === 'cabinet' ? 'active' : ''}`} onClick={() => changeTab('cabinet')}>Кабінет →</button><button className={`accent-btn ${activeTab === 'applications' ? 'active' : ''}`} onClick={() => changeTab('applications')}>Подати заявку</button></div></header><section className="hero-title"><h1>RP ROLE<br />MANAGEMENT</h1><p>Система керування правилами, ролями, організаціями та заявками RP-сервера</p></section><main className="landing-content">{apiError && <div className="warning-box">{apiError}</div>}{activeTab !== 'cabinet' && activeTab !== 'forum' && <div className="search-box"><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Пошук у поточному розділі..." /></div>}{activeTab === 'rules' && <RulesView rules={rules} user={currentUser} ruleForm={ruleForm} setRuleForm={setRuleForm} editRuleId={editRuleId} setEditRuleId={setEditRuleId} saveRule={saveRule} removeRule={removeRule} />}{activeTab === 'applications' && <ApplicationsView apps={apps} user={currentUser} organizations={data.organizations} appForm={appForm} setAppForm={setAppForm} submitApplication={submitApplication} change={setAppStatus} t={t} setActiveTab={changeTab} />}{activeTab === 'organizations' && <OrganizationsView organizations={data.organizations} />}{activeTab === 'players' && <PlayersView user={currentUser} players={filteredPlayers} usersById={usersById} orgsById={orgsById} leaderOrg={leaderOrg} orgMembers={orgMembers} freePlayers={freePlayers} memberUserId={memberUserId} setMemberUserId={setMemberUserId} addMember={addMember} removeMember={removeMember} />}{activeTab === 'forum' && <ForumPage user={currentUser} setActiveTab={changeTab} />}{activeTab === 'admin' && <AdminView user={currentUser} users={data.users} punishments={data.punishments} logs={logs} punishmentForm={punishmentForm} setPunishmentForm={setPunishmentForm} createPunishment={createPunishment} />}{activeTab === 'logs' && <LogsView logs={logs} />}{activeTab === 'cabinet' && <CabinetView user={currentUser} nickname={nickname} password={password} profileForm={profileForm} setProfileForm={setProfileForm} setNickname={setNickname} setPassword={setPassword} handleLogin={handleLogin} saveProfile={saveProfile} logout={logout} loginError={loginError} language={language} setLanguage={setLanguage} />}</main></div>;
 }
 
 export default App;
