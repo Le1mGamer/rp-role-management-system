@@ -42,6 +42,7 @@ const auth = (roles) => async (req, res, next) => {
 };
 async function log(userId, action) { await pool.query('insert into logs(user_id,action,timestamp) values($1,$2,now())', [userId, action]); }
 async function refreshOrgMembers(orgId) {
+  if (!orgId) return;
   await pool.query('update organizations set members=(select count(*) from players where organization_id=$1) where id=$1', [orgId]);
   await pool.query('update leaders set members_count=(select count(*) from players where organization_id=$1) where organization_id=$1', [orgId]);
 }
@@ -124,10 +125,44 @@ app.patch('/api/users/:id/role', auth(['admin']), async (req, res) => {
   await pool.query('update users set role=$1 where id=$2', [role, userId]);
   if (role === 'player') { await pool.query('insert into players(user_id,level,experience,reputation) values($1,1,0,0) on conflict do nothing', [userId]); await pool.query('delete from admins where user_id=$1', [userId]); await pool.query('delete from leaders where user_id=$1', [userId]); }
   if (role === 'admin') { await pool.query('insert into admins(user_id,access_level,permissions,super_admin) values($1,3,$2,false) on conflict do nothing', [userId, ['users','rules','logs']]); await pool.query('delete from leaders where user_id=$1', [userId]); }
-  if (role === 'leader') { if (!organizationId) return res.status(400).json({ message: 'organizationId required for leader' }); await pool.query('insert into leaders(user_id,organization_id,rank,members_count) values($1,$2,$3,0) on conflict (user_id) do update set organization_id=excluded.organization_id', [userId, Number(organizationId), 'Leader']); await pool.query('delete from admins where user_id=$1', [userId]); }
+  if (role === 'leader') { if (!organizationId) return res.status(400).json({ message: 'organizationId required for leader' }); await pool.query('insert into leaders(user_id,organization_id,rank,members_count) values($1,$2,$3,0) on conflict (user_id) do update set organization_id=excluded.organization_id', [userId, Number(organizationId), 'Leader']); await pool.query('delete from admins where user_id=$1', [userId]); await refreshOrgMembers(Number(organizationId)); }
   await log(req.user.id, 'Змінив роль користувача #' + userId + ' на ' + role);
   await syncUserSafely(userId);
   res.json(await publicUser(userId));
+});
+
+app.get('/api/leader/organization', auth(['leader','admin']), async (req, res) => {
+  if (req.user.role === 'admin') return res.json(null);
+  const { rows } = await pool.query(
+    'select o.id,o.name,o.type,o.rating,o.created_at as "createdAt",o.members,o.discord_role_id as "discordRoleId" from leaders l join organizations o on o.id=l.organization_id where l.user_id=$1 limit 1',
+    [req.user.id]
+  );
+  res.json(rows[0] || null);
+});
+
+app.patch('/api/players/:userId/organization', auth(['leader','admin']), async (req, res) => {
+  const targetUserId = Number(req.params.userId);
+  const requestedOrgId = req.body.organizationId === null || req.body.organizationId === '' || req.body.organizationId === undefined ? null : Number(req.body.organizationId);
+  const previous = await pool.query('select organization_id as "organizationId" from players where user_id=$1', [targetUserId]);
+  const previousOrgId = previous.rows[0]?.organizationId || null;
+
+  if (req.user.role === 'leader') {
+    const leader = await pool.query('select organization_id as "organizationId" from leaders where user_id=$1', [req.user.id]);
+    const leaderOrgId = leader.rows[0]?.organizationId;
+    if (!leaderOrgId) return deny(res, 'Leader organization was not found');
+    if (requestedOrgId !== null && requestedOrgId !== leaderOrgId) return deny(res, 'Leader can manage only own organization');
+    if (requestedOrgId === null && previousOrgId !== leaderOrgId) return deny(res, 'Leader can remove only own organization members');
+  }
+
+  await pool.query(
+    'insert into players(user_id,level,experience,reputation,organization_id) values($1,1,0,0,$2) on conflict (user_id) do update set organization_id=excluded.organization_id returning id,user_id as "userId",organization_id as "organizationId"',
+    [targetUserId, requestedOrgId]
+  );
+  await refreshOrgMembers(previousOrgId);
+  await refreshOrgMembers(requestedOrgId);
+  await log(req.user.id, 'Оновив організацію гравця #' + targetUserId);
+  await syncUserSafely(targetUserId);
+  res.json({ ok: true, userId: targetUserId, organizationId: requestedOrgId });
 });
 
 app.get('/api/players', auth(['player','leader','admin']), async (req, res) => {
