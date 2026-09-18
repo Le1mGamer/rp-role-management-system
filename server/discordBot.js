@@ -168,6 +168,38 @@ export async function syncDiscordRoles(userId) {
   };
 }
 
+export async function removeDiscordRoleFromUser(userId, roleId) {
+  if (!roleId || !process.env.DISCORD_BOT_TOKEN || !process.env.DISCORD_GUILD_ID) {
+    return { ok: false, skipped: true, reason: 'Discord bot or role is not configured' };
+  }
+
+  if (!client.isReady()) {
+    await startDiscordBot();
+  }
+
+  if (!client.isReady()) {
+    return { ok: false, skipped: true, reason: 'Discord bot is not ready' };
+  }
+
+  const { rows } = await pool.query('select id,discord_id from users where id=$1', [userId]);
+  const user = rows[0];
+  if (!user?.discord_id) {
+    return { ok: false, skipped: true, reason: 'User has no connected Discord account' };
+  }
+
+  const guild = await getGuild();
+  const member = await guild.members.fetch(user.discord_id).catch(() => null);
+  if (!member) {
+    return { ok: false, skipped: true, reason: 'Discord member was not found on this server' };
+  }
+
+  await member.roles.remove(roleId).catch((error) => {
+    console.error('Discord role remove failed:', error.message);
+  });
+
+  return { ok: true, userId, removedRole: roleId };
+}
+
 export async function syncAllDiscordRoles() {
   const { rows } = await pool.query('select id from users where discord_id is not null order by id');
   const results = [];
