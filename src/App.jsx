@@ -7,6 +7,7 @@ import ForumPage from './components/ForumPage.jsx';
 
 const emptyRule = { category: '', title: '', text: '', access: 'all' };
 const emptyProfile = { email: '', birthDate: '', profileDescription: '' };
+const emptyData = { rules: [], organizations: [], applications: [], players: [], logs: [], users: [], punishments: [] };
 const USER_STORAGE_KEY = 'rpms_user';
 const TAB_STORAGE_KEY = 'rpms_active_tab';
 const normDate = (v) => v ? String(v).slice(0, 10) : '';
@@ -40,16 +41,17 @@ function App() {
   const [profileForm, setProfileForm] = useState(emptyProfile);
   const [loginError, setLoginError] = useState('');
   const [apiError, setApiError] = useState('');
-  const [data, setData] = useState(seedData);
+  const [data, setData] = useState(readSavedUser() ? emptyData : seedData);
   const [leaderOrg, setLeaderOrg] = useState(null);
   const [ruleForm, setRuleForm] = useState(emptyRule);
   const [editRuleId, setEditRuleId] = useState(null);
   const [appForm, setAppForm] = useState({ organizationId: '', type: 'join_organization' });
   const [memberUserId, setMemberUserId] = useState('');
   const [punishmentForm, setPunishmentForm] = useState({ userId: '', type: 'warning', reason: '', endDate: '' });
+
   const t = translations[language];
-  const usersById = useMemo(() => Object.fromEntries(data.users.map((u) => [u.id, u])), [data.users]);
-  const orgsById = useMemo(() => Object.fromEntries(data.organizations.map((o) => [o.id, o])), [data.organizations]);
+  const usersById = useMemo(() => Object.fromEntries((data.users || []).map((u) => [u.id, u])), [data.users]);
+  const orgsById = useMemo(() => Object.fromEntries((data.organizations || []).map((o) => [o.id, o])), [data.organizations]);
   const allowedTabs = useMemo(() => {
     if (!currentUser) return ['rules', 'organizations', 'forum'];
     if (currentUser.role === 'admin') return ['rules', 'organizations', 'applications', 'players', 'forum', 'admin', 'logs'];
@@ -72,26 +74,20 @@ function App() {
   }
 
   async function loadData(user = currentUser) {
-    if (!user) return;
+    if (!user) {
+      setData(seedData);
+      setApiError('');
+      return;
+    }
 
     const warnings = [];
-    const next = {
-      ...seedData,
-      ...data,
-      rules: data.rules?.length ? data.rules : seedData.rules,
-      organizations: data.organizations?.length ? data.organizations : seedData.organizations,
-      applications: data.applications || [],
-      players: data.players?.length ? data.players : seedData.players,
-      logs: data.logs || [],
-      users: data.users?.length ? data.users : seedData.users,
-      punishments: data.punishments || [],
-    };
+    const next = { ...emptyData };
 
-    const loadOptional = async (path, fallback) => {
+    const loadOptional = async (path, fallback = []) => {
       try {
         return await apiRequest(path, {}, user.id);
       } catch (err) {
-        warnings.push(err.message);
+        warnings.push(err.message || path);
         return fallback;
       }
     };
@@ -101,39 +97,30 @@ function App() {
       const activeUser = profile || user;
       applyProfile(activeUser);
 
-      next.rules = await loadOptional('/rules', next.rules);
-      next.organizations = await loadOptional('/organizations', next.organizations);
-      next.applications = await loadOptional('/applications', []);
-      next.players = await loadOptional('/players', []);
-
-      if (['leader', 'admin'].includes(activeUser.role)) {
-        next.logs = await loadOptional('/logs', []);
-      } else {
-        next.logs = [];
-      }
+      next.rules = await loadOptional('/rules');
+      next.organizations = await loadOptional('/organizations');
+      next.applications = await loadOptional('/applications');
+      next.players = await loadOptional('/players');
 
       if (activeUser.role === 'leader') {
+        next.logs = await loadOptional('/logs');
         setLeaderOrg(await loadOptional('/leader/organization', null));
       } else {
         setLeaderOrg(null);
       }
 
       if (activeUser.role === 'admin') {
-        next.users = await loadOptional('/users', seedData.users);
-        next.punishments = await loadOptional('/punishments', []);
-      } else {
-        next.users = next.users?.length ? next.users : seedData.users;
-        next.punishments = [];
+        next.logs = await loadOptional('/logs');
+        next.users = await loadOptional('/users');
+        next.punishments = await loadOptional('/punishments');
       }
 
       setData(next);
-      if (warnings.length) {
-        setApiError('Дані з PostgreSQL завантажено частково. Проблемні запити: ' + warnings.join(' | '));
-      } else {
-        setApiError('');
-      }
+      setApiError(warnings.length ? 'Дані з PostgreSQL завантажено частково. Не завантажились: ' + warnings.join(' | ') : '');
     } catch (err) {
-      setApiError('Не вдалося отримати профіль з backend/PostgreSQL: ' + err.message);
+      setData(emptyData);
+      setLeaderOrg(null);
+      setApiError('Не вдалося отримати профіль з backend/PostgreSQL: ' + (err.message || 'невідома помилка'));
     }
   }
 
@@ -157,13 +144,14 @@ function App() {
     e.preventDefault();
     try {
       const u = await apiRequest('/auth/login', { method: 'POST', body: JSON.stringify({ nickname, password }) });
-      applyProfile(u); setLoginError(''); setApiError(''); changeTab('cabinet');
-    } catch (err) {
-      const u = seedData.users.find((x) => x.nickname.toLowerCase() === nickname.trim().toLowerCase() && x.password === password && x.status !== 'banned');
-      if (!u) { setLoginError(err.message || t.loginError); return; }
       applyProfile(u);
-      setApiError('Backend/PostgreSQL недоступні, виконано демо-вхід на локальних seed-даних: ' + err.message);
+      setLoginError('');
+      setApiError('');
+      setData(emptyData);
       changeTab('cabinet');
+    } catch (err) {
+      setLoginError(err.message || t.loginError);
+      setApiError('');
     }
   }
 
@@ -178,12 +166,12 @@ function App() {
   async function removeMember(userId) { try { await apiRequest(`/players/${userId}/organization`, { method: 'PATCH', body: JSON.stringify({ organizationId: null }) }, currentUser.id); await reload(); } catch (err) { setApiError(err.message); } }
   async function createPunishment(e) { e.preventDefault(); try { await apiRequest('/punishments', { method: 'POST', body: JSON.stringify({ ...punishmentForm, userId: Number(punishmentForm.userId) }) }, currentUser.id); setPunishmentForm({ userId: '', type: 'warning', reason: '', endDate: '' }); await reload(); } catch (err) { setApiError(err.message); } }
 
-  const rules = data.rules.filter((r) => (r.access === 'all' || currentUser?.role === 'admin' || r.access === currentUser?.role) && `${r.title} ${r.category} ${r.text}`.toLowerCase().includes(q));
-  const apps = data.applications.filter((a) => `${a.applicant || usersById[a.applicantId]?.nickname || ''} ${a.status}`.toLowerCase().includes(q));
-  const logs = data.logs.filter((l) => `${l.nickname || usersById[l.userId]?.nickname || ''} ${l.action}`.toLowerCase().includes(q));
-  const filteredPlayers = data.players.filter((p) => `${p.nickname || usersById[p.userId]?.nickname || ''} ${p.organization || ''}`.toLowerCase().includes(q));
-  const orgMembers = currentUser?.role === 'leader' && leaderOrg ? data.players.filter((p) => (p.organizationId || p.organization_id) === leaderOrg.id) : [];
-  const freePlayers = data.players.filter((p) => !p.organizationId && !p.organization_id);
+  const rules = (data.rules || []).filter((r) => (r.access === 'all' || currentUser?.role === 'admin' || r.access === currentUser?.role) && `${r.title} ${r.category} ${r.text}`.toLowerCase().includes(q));
+  const apps = (data.applications || []).filter((a) => `${a.applicant || usersById[a.applicantId]?.nickname || ''} ${a.status}`.toLowerCase().includes(q));
+  const logs = (data.logs || []).filter((l) => `${l.nickname || usersById[l.userId]?.nickname || ''} ${l.action}`.toLowerCase().includes(q));
+  const filteredPlayers = (data.players || []).filter((p) => `${p.nickname || usersById[p.userId]?.nickname || ''} ${p.organization || ''}`.toLowerCase().includes(q));
+  const orgMembers = currentUser?.role === 'leader' && leaderOrg ? (data.players || []).filter((p) => (p.organizationId || p.organization_id) === leaderOrg.id) : [];
+  const freePlayers = (data.players || []).filter((p) => !p.organizationId && !p.organization_id);
 
   return <div className="site-shell"><div className="hero-bg" /><header className="glass-header"><div className="brand-pill">RPMS</div><nav className="top-nav">{navTabs.map((tab) => <button key={tab.id} className={activeTab === tab.id ? 'active' : ''} onClick={() => changeTab(tab.id)}>{tab.label}</button>)}</nav><div className="header-actions"><button className={`dark-btn ${activeTab === 'cabinet' ? 'active' : ''}`} onClick={() => changeTab('cabinet')}>Кабінет →</button><button className={`accent-btn ${activeTab === 'applications' ? 'active' : ''}`} onClick={() => changeTab('applications')}>Подати заявку</button></div></header><section className="hero-title"><h1>RP ROLE<br />MANAGEMENT</h1><p>Система керування правилами, ролями, організаціями та заявками RP-сервера</p></section><main className="landing-content">{apiError && <div className="warning-box">{apiError}</div>}{activeTab !== 'cabinet' && activeTab !== 'forum' && <div className="search-box"><input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Пошук у поточному розділі..." /></div>}{activeTab === 'rules' && <RulesView rules={rules} user={currentUser} ruleForm={ruleForm} setRuleForm={setRuleForm} editRuleId={editRuleId} setEditRuleId={setEditRuleId} saveRule={saveRule} removeRule={removeRule} />}{activeTab === 'applications' && <ApplicationsView apps={apps} user={currentUser} organizations={data.organizations} appForm={appForm} setAppForm={setAppForm} submitApplication={submitApplication} change={setAppStatus} t={t} setActiveTab={changeTab} />}{activeTab === 'organizations' && <OrganizationsView organizations={data.organizations} />}{activeTab === 'players' && <PlayersView user={currentUser} players={filteredPlayers} usersById={usersById} orgsById={orgsById} leaderOrg={leaderOrg} orgMembers={orgMembers} freePlayers={freePlayers} memberUserId={memberUserId} setMemberUserId={setMemberUserId} addMember={addMember} removeMember={removeMember} />}{activeTab === 'forum' && <ForumPage user={currentUser} setActiveTab={changeTab} />}{activeTab === 'admin' && <AdminView user={currentUser} users={data.users} punishments={data.punishments} logs={logs} punishmentForm={punishmentForm} setPunishmentForm={setPunishmentForm} createPunishment={createPunishment} />}{activeTab === 'logs' && <LogsView logs={logs} />}{activeTab === 'cabinet' && <CabinetView user={currentUser} nickname={nickname} password={password} profileForm={profileForm} setProfileForm={setProfileForm} setNickname={setNickname} setPassword={setPassword} handleLogin={handleLogin} saveProfile={saveProfile} logout={logout} loginError={loginError} language={language} setLanguage={setLanguage} />}</main></div>;
 }
